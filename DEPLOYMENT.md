@@ -90,6 +90,11 @@ Ensure your Slack app has these OAuth scopes:
 - Ensure `requirements.txt` includes all dependencies
 - Check Python version compatibility (Vercel uses Python 3.9+)
 
+**❌ OpenAI Client initialization error**
+- This project uses OpenAI v1.35.13 specifically for Vercel compatibility
+- The app uses lazy loading to avoid initialization issues in serverless environment
+- If you see `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`, redeploy with the pinned versions
+
 **❌ Timeout issues**
 - Vercel serverless functions have 10s timeout (hobby) / 60s (pro)
 - The bot's 10-minute survey timeout works within these limits

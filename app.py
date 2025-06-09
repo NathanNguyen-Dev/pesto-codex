@@ -34,8 +34,18 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ADMIN_USER_IDS = os.environ.get("ADMIN_USER_IDS", "").split(",")
 
 # Initialize clients
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# openai_client = OpenAI(api_key=OPENAI_API_KEY)  # Lazy load this
 api = Api(AIRTABLE_API_KEY)
+
+# Lazy loading for OpenAI client
+_openai_client = None
+
+def get_openai_client():
+    """Get OpenAI client with lazy loading."""
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return _openai_client
 
 # In-memory conversation state storage
 conversation_state = {}
@@ -180,7 +190,7 @@ def get_openai_response(user_id: str, user_message: str):
         messages.append({"role": "user", "content": user_message})
     
     try:
-        response = openai_client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             max_tokens=200,
