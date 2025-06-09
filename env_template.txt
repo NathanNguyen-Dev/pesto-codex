@@ -1,0 +1,26 @@
+# Copy this to .env and fill in your actual values
+
+# Slack Bot Configuration
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_SIGNING_SECRET=your-signing-secret-here
+
+# Airtable Configuration
+AIRTABLE_API_KEY=your-airtable-api-key
+AIRTABLE_BASE_ID=your-base-id
+AIRTABLE_TABLE=SlackUsers
+AIRTABLE_COLUMN_NAME=SlackID
+
+# OpenAI Configuration
+OPENAI_API_KEY=your-openai-api-key
+
+# ⚠️  IMPORTANT: Admin User IDs - Use ACTUAL Slack User IDs of community admins
+# 📋 To find your Slack User ID: 
+#    1. Right-click on your profile in Slack → "Copy member ID"
+#    2. Or go to your profile → More → Copy member ID
+# 
+# Format: Comma-separated list of Slack User IDs (no spaces)
+# Example: ADMIN_USER_IDS=U03H4JX9C2Z,U1234567890,U9876543210
+ADMIN_USER_IDS=YOUR_ACTUAL_SLACK_USER_ID_HERE
+
+# Server Configuration  
+PORT=3000 

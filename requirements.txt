@@ -1,3 +1,4 @@
-slack-bolt
-pyairtable
-python-dotenv 
+slack-bolt==1.18.1
+python-dotenv==1.0.0
+pyairtable==2.3.3
+openai==1.47.0 
