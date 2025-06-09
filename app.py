@@ -100,25 +100,30 @@ def safe_dm(user_id, message):
         print(f"Failed to DM {user_id}: {e}")
         return False
 
-def get_user_ids_from_table(table_id: str = None, column_name: str = None):
-    """Fetch Slack User IDs from a specific Airtable table."""
+def get_user_ids_from_table(table_id: str = None, column_name: str = None, name_column: str = "Name"):
+    """Fetch Slack User IDs and names from a specific Airtable table."""
     target_table_id = table_id or AIRTABLE_TABLE_NAME
     target_column = column_name or AIRTABLE_COLUMN_NAME
     
-    print(f"Fetching user IDs from Airtable base '{AIRTABLE_BASE_ID}', table '{target_table_id}', column '{target_column}'...")
+    print(f"Fetching user IDs and names from Airtable base '{AIRTABLE_BASE_ID}', table '{target_table_id}', columns '{target_column}' and '{name_column}'...")
     
     try:
         airtable_table = api.table(AIRTABLE_BASE_ID, target_table_id)
         records = airtable_table.all()
         
-        user_ids = [
-            rec["fields"].get(target_column)
-            for rec in records
-            if target_column in rec["fields"] and rec["fields"].get(target_column)
-        ]
+        users = []
+        for rec in records:
+            user_id = rec["fields"].get(target_column)
+            user_name = rec["fields"].get(name_column, "there")  # Default to "there" if no name
+            
+            if user_id:  # Only include records with valid user IDs
+                users.append({
+                    "id": user_id,
+                    "name": user_name
+                })
         
-        print(f"Found {len(user_ids)} user ID(s) in table '{target_table_id}'.")
-        return user_ids, target_table_id
+        print(f"Found {len(users)} user(s) in table '{target_table_id}'.")
+        return users, target_table_id
         
     except Exception as e:
         print(f"Error fetching from table '{target_table_id}': {e}")
@@ -282,10 +287,10 @@ def save_full_conversation_to_airtable(user_id: str):
         import traceback
         traceback.print_exc()
 
-def send_dm_to_user_id(user_id: str):
+def send_dm_to_user_id(user_id: str, user_name: str = "there"):
     """Send initial DM to start the conversation."""
     try:
-        print(f"Attempting to open DM with User ID: {user_id}")
+        print(f"Attempting to open DM with User ID: {user_id} ({user_name})")
         res = app.client.conversations_open(users=user_id)
         channel_id = res["channel"]["id"]
         
@@ -293,13 +298,13 @@ def send_dm_to_user_id(user_id: str):
         
         response = app.client.chat_postMessage(
             channel=channel_id,
-            text="Meet Pesto, the AI-powered community engagement bot!",
+            text=f"Hi {user_name}! Meet Pesto, the AI-powered community engagement bot!",
             blocks=[
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": """👋 Meet Pesto, the AI-powered community engagement bot!\n\nPesto is here to help enhance our community experience by providing insightful conversations and fostering meaningful connections.\n\nWe're running an experiment to improve engagement and would love your input, can you please answer a few questions?"""
+                        "text": f"""👋 Hi {user_name}! Meet Pesto, the AI-powered community engagement bot!\n\nPesto is here to help enhance our community experience by providing insightful conversations and fostering meaningful connections.\n\nWe're running an experiment to improve engagement and would love your input, can you please answer a few questions?"""
                     }
                 },
                 {
@@ -327,14 +332,15 @@ def send_dm_to_user_id(user_id: str):
             "step": "not_started",
             "conversation_history": [],
             "start_time": None,
-            "thread_ts": response["ts"]  # Save the timestamp for threading
+            "thread_ts": response["ts"],  # Save the timestamp for threading
+            "user_name": user_name  # Store the user's name for future use
         })
         
-        print(f"Successfully sent initial DM to User ID: {user_id} (thread_ts: {response['ts']})")
+        print(f"Successfully sent initial DM to User ID: {user_id} ({user_name}) (thread_ts: {response['ts']})")
     except SlackApiError as e:
-        print(f"Error DM-ing {user_id}: {e.response['error']}")
+        print(f"Error DM-ing {user_id} ({user_name}): {e.response['error']}")
     except Exception as e:
-        print(f"Unexpected error sending DM to {user_id}: {e}")
+        print(f"Unexpected error sending DM to {user_id} ({user_name}): {e}")
 
 def notify_users_in_table(table_id: str = None, column_name: str = None, test_mode: bool = False):
     """Send DMs to all users in a specific Airtable table."""
@@ -359,10 +365,10 @@ def notify_users_in_table(table_id: str = None, column_name: str = None, test_mo
     print(f"✅ Found {len(user_ids)} users in table '{actual_table_id}'")
     
     if test_mode:
-        first_user_id = user_ids[0]
+        first_user_id = user_ids[0]["id"]
         print(f"🧪 TEST MODE: Sending DM to first user only: {first_user_id}")
         try:
-            send_dm_to_user_id(first_user_id)
+            send_dm_to_user_id(first_user_id, user_ids[0]["name"])
             print(f"✅ Test DM sent successfully to {first_user_id}")
             return 1
         except Exception as e:
@@ -372,10 +378,12 @@ def notify_users_in_table(table_id: str = None, column_name: str = None, test_mo
         print(f"📤 Sending DMs to all {len(user_ids)} users...")
         success_count = 0
         
-        for i, user_id in enumerate(user_ids, 1):
+        for i, user_info in enumerate(user_ids, 1):
+            user_id = user_info["id"]
+            user_name = user_info["name"]
             try:
-                print(f"📨 Sending DM {i}/{len(user_ids)} to user: {user_id}")
-                send_dm_to_user_id(user_id)
+                print(f"📨 Sending DM {i}/{len(user_ids)} to user: {user_id} ({user_name})")
+                send_dm_to_user_id(user_id, user_name)
                 success_count += 1
                 print(f"✅ DM {i} sent successfully")
                 
@@ -384,7 +392,7 @@ def notify_users_in_table(table_id: str = None, column_name: str = None, test_mo
                     time.sleep(2)
                     
             except Exception as e:
-                print(f"❌ Error sending DM {i} to {user_id}: {e}")
+                print(f"❌ Error sending DM {i} to {user_id} ({user_name}): {e}")
                 # Continue with other users instead of failing completely
                 continue
             
@@ -413,7 +421,7 @@ def handle_trigger_survey_command(ack, respond, command):
     if not text:
         respond({
             "response_type": "ephemeral",
-            "text": "�� *MLAI Survey Bot - Usage*\n\n"
+            "text": "📋 *MLAI Survey Bot - Usage*\n\n"
                    "`/trigger-survey <table_id> [test|all] [column_name]`\n\n"
                    "*Examples:*\n"
                    "• `/trigger-survey tbl123ABC456DEF test` - Send to first user only\n"
@@ -578,7 +586,7 @@ def handle_survey_start_button(ack, body, client):
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"🚀 **Survey Started!**\n\n{question_text}"
+                    "text": f"🚀 Survey Started!\n\n{question_text}"
                 }
             }
         ]
