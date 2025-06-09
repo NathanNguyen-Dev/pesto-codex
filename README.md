@@ -27,13 +27,13 @@ The bot uses AI to have natural conversations (3-4 exchanges) and automatically 
 
 ### **Core Components**
 
-#### **1. Slack Integration (`slack_bot_clean.py`)**
+#### **1. Slack Integration (`app.py`)**
 - **Admin Commands**: `/trigger-survey` slash command for authorized users
 - **Button Interactions**: Survey start button handling
 - **Message Processing**: Natural conversation flow with users
 - **DM Management**: Direct message routing and conversation threading
 
-#### **2. AI Conversation Engine (`bot_prompts.py`)**
+#### **2. AI Conversation Engine (`prompts.py`)**
 - **Natural Language Processing**: OpenAI GPT-4o-mini for conversational responses
 - **Conversation Flow**: Guided 3-4 exchange conversations
 - **Topic Coverage**: Ensures both motivation and goals topics are covered
@@ -119,9 +119,13 @@ AIRTABLE_COLUMN_NAME=SlackID
 
 ### **Running the Bot**
 
+**Local Development:**
 ```bash
-python slack_bot_clean.py
+python app.py
 ```
+
+**Vercel Deployment:**
+See [DEPLOYMENT.md](DEPLOYMENT.md) for complete Vercel deployment guide.
 
 ## 📖 **Usage**
 
@@ -236,12 +240,14 @@ if thread_ts:
 ## 📁 **Project Structure**
 
 ```
-├── slack_bot_clean.py       # Main bot application
-├── bot_prompts.py           # AI conversation prompts and logic
+├── app.py                   # Main bot application (production ready)
+├── prompts.py               # AI conversation prompts and logic
 ├── requirements.txt         # Python dependencies
-├── .env                     # Environment variables (not in repo)
-├── progress.md             # Development progress and issues
-└── README.md               # This file
+├── vercel.json             # Vercel deployment configuration
+├── .env.example            # Environment variables template
+├── DEPLOYMENT.md           # Vercel deployment guide
+├── README.md               # This file
+└── progress.md             # Development history
 ```
 
 ## 🔐 **Security & Permissions**
@@ -254,8 +260,8 @@ if thread_ts:
 ## 🚀 **Development**
 
 ### **Adding New Features**
-1. Modify conversation prompts in `bot_prompts.py`
-2. Update conversation logic in `slack_bot_clean.py`
+1. Modify conversation prompts in `prompts.py`
+2. Update conversation logic in `app.py`
 3. Test with `/trigger-survey` in test mode
 4. Update documentation
 

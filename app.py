@@ -12,7 +12,7 @@ from slack_bolt import App
 from slack_sdk.errors import SlackApiError
 from pyairtable import Api
 from openai import OpenAI
-from bot_prompts import get_system_prompt
+from prompts import get_system_prompt
 
 load_dotenv()
 
