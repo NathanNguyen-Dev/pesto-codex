@@ -620,19 +620,23 @@ def handle_survey_start_button(ack, body, client):
         ]
     )
 
-@app.message("")
-def handle_direct_message(message, say):
+# Temporarily disabled to test event handler
+# @app.message("")
+def handle_direct_message_disabled(message, say):
     """Handle user messages for survey conversations (DMs only)."""
     user_id = message["user"]
     user_text = message["text"]
     channel_type = message.get("channel_type")
     channel_id = message["channel"]
     
+    print(f"🔵 DM handler triggered - channel_type: {channel_type}, user: {user_id}")
+    
     if message.get("bot_id"):
         return
 
     # Only handle direct messages for survey functionality
     if channel_type != "im":
+        print(f"🔵 Not a DM, letting other handlers process - channel_type: {channel_type}")
         return  # Let other handlers process non-DM messages
 
     print(f"Received DM from {user_id}: {user_text}")
