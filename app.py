@@ -13,6 +13,8 @@ from slack_sdk.errors import SlackApiError
 from pyairtable import Api
 from openai import OpenAI
 from prompts import get_system_prompt
+from nlp import extract_topics
+from graph import update_knowledge_graph
 
 load_dotenv()
 
@@ -47,12 +49,38 @@ def get_openai_client():
         _openai_client = OpenAI(api_key=OPENAI_API_KEY)
     return _openai_client
 
-# In-memory conversation state storage
+# In-memory conversation state storage with thread safety
 conversation_state = {}
+conversation_lock = threading.Lock()
+
+# Rate limiting for OpenAI API calls
+from collections import defaultdict
+openai_last_call = defaultdict(float)
+OPENAI_RATE_LIMIT = 1.0  # Minimum 1 second between calls per user
 
 def is_admin(user_id: str) -> bool:
     """Check if user is an admin."""
     return user_id in ADMIN_USER_IDS
+
+def safe_get_conversation_state(user_id: str):
+    """Thread-safe get conversation state."""
+    with conversation_lock:
+        return conversation_state.get(user_id, {}).copy()
+
+def safe_update_conversation_state(user_id: str, updates: dict):
+    """Thread-safe update conversation state."""
+    with conversation_lock:
+        if user_id not in conversation_state:
+            conversation_state[user_id] = {}
+        conversation_state[user_id].update(updates)
+
+def can_call_openai(user_id: str) -> bool:
+    """Check if we can make an OpenAI call for this user (rate limiting)."""
+    now = time.time()
+    if now - openai_last_call[user_id] < OPENAI_RATE_LIMIT:
+        return False
+    openai_last_call[user_id] = now
+    return True
 
 def safe_say(say_func, message: str, user_id: str = None, max_retries: int = 3):
     """Safely send a message with rate limiting protection."""
@@ -81,7 +109,7 @@ def safe_dm(user_id, message):
         dm_channel = app.client.conversations_open(users=user_id)["channel"]["id"]
         
         # Get the thread_ts for this conversation to maintain continuity
-        state = conversation_state.get(user_id, {})
+        state = safe_get_conversation_state(user_id)
         thread_ts = state.get("thread_ts")
         
         # Build message payload
@@ -714,6 +742,50 @@ def handle_start_dm_button(ack, body, client):
         
     except Exception as e:
         print(f"Error sending DM to {user_id}: {e}")
+
+# --- Slack → OpenAI → Neo4j pipeline integration ---
+@app.event("message")
+def handle_message_event(event, client, logger):
+    """
+    Listen to all Slack messages (channels/DMs), extract topics, and update Neo4j knowledge graph.
+    """
+    user_id = event.get("user")
+    text = event.get("text")
+    ts = event.get("ts")
+    channel = event.get("channel")
+
+    # Ignore bot messages or messages without text
+    if not user_id or not text or event.get("bot_id"):
+        return
+
+    print(f"📨 Message received in channel {channel} from user {user_id}: {text[:50]}...")
+
+    # Get user display name
+    try:
+        user_info = client.users_info(user=user_id)
+        display_name = user_info["user"].get("profile", {}).get("display_name") or user_info["user"].get("real_name", "unknown")
+        print(f"👤 User info: {user_id} = {display_name}")
+    except Exception as e:
+        print(f"❌ Failed to fetch display name for {user_id}: {e}")
+        display_name = "unknown"
+
+    # Extract topics
+    try:
+        topics = extract_topics(text)
+        print(f"🧠 Extracted topics for {user_id} ({display_name}): {topics}")
+    except Exception as e:
+        print(f"❌ OpenAI topic extraction failed for {user_id}: {e}")
+        topics = []
+
+    # Update Neo4j
+    if topics:
+        try:
+            update_knowledge_graph(user_id, display_name, topics, ts)
+            print(f"📊 Updated Neo4j for {user_id} with {len(topics)} topics")
+        except Exception as e:
+            print(f"❌ Neo4j update failed for {user_id}: {e}")
+    else:
+        print(f"⚠️ No topics extracted, skipping Neo4j update")
 
 if __name__ == "__main__":
     print("🤖 Starting MLAI Survey Bot with Slash Commands...")
