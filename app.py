@@ -747,13 +747,20 @@ def handle_message_event(event, client, logger):
     """
     Listen to all Slack messages (channels/DMs), extract topics, and update Neo4j knowledge graph.
     """
+    # Debug logging first
+    print(f"🔍 DEBUG: Message event received! Event keys: {list(event.keys())}")
+    
     user_id = event.get("user")
     text = event.get("text")
     ts = event.get("ts")
     channel = event.get("channel")
+    subtype = event.get("subtype")
 
-    # Ignore bot messages or messages without text
-    if not user_id or not text or event.get("bot_id"):
+    print(f"🔍 DEBUG: user_id={user_id}, text={text[:30] if text else None}, subtype={subtype}")
+
+    # Ignore bot messages, messages without text, or message subtypes (like file uploads, etc.)
+    if not user_id or not text or event.get("bot_id") or subtype:
+        print(f"🔍 DEBUG: Ignoring message - bot_id={event.get('bot_id')}, subtype={subtype}, has_text={bool(text)}")
         return
 
     print(f"📨 Message received in channel {channel} from user {user_id}: {text[:50]}...")
@@ -784,6 +791,12 @@ def handle_message_event(event, client, logger):
             print(f"❌ Neo4j update failed for {user_id}: {e}")
     else:
         print(f"⚠️ No topics extracted, skipping Neo4j update")
+
+# Debug handler to see all events being received
+@app.event({"type": "message"})
+def debug_all_message_events(event, logger):
+    """Debug handler to see all message events."""
+    print(f"🚨 DEBUG: Raw message event received: {event}")
 
 if __name__ == "__main__":
     print("🤖 Starting MLAI Survey Bot with Slash Commands...")
