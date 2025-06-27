@@ -742,21 +742,23 @@ def handle_start_dm_button(ack, body, client):
         print(f"Error sending DM to {user_id}: {e}")
 
 # --- Slack → OpenAI → Neo4j pipeline integration ---
+# (Consolidated into debug_and_process_message_events above to avoid handler conflicts)
+
+# Single debug handler to avoid conflicts
 @app.event("message")
-def handle_message_event(event, client, logger):
-    """
-    Listen to all Slack messages (channels/DMs), extract topics, and update Neo4j knowledge graph.
-    """
-    # Debug logging first
-    print(f"🔍 DEBUG: Message event received! Event keys: {list(event.keys())}")
+def debug_and_process_message_events(event, client, logger):
+    """Debug and process all message events."""
+    print(f"🚨 DEBUG: Message event received!")
+    print(f"🚨 DEBUG: Event data - type: {event.get('type')}, subtype: {event.get('subtype')}")
+    print(f"🚨 DEBUG: User: {event.get('user')}, text: {event.get('text', '')[:50]}...")
+    print(f"🚨 DEBUG: Channel: {event.get('channel')}, bot_id: {event.get('bot_id')}")
     
+    # Now process for topic extraction (moved from the other handler)
     user_id = event.get("user")
     text = event.get("text")
     ts = event.get("ts")
     channel = event.get("channel")
     subtype = event.get("subtype")
-
-    print(f"🔍 DEBUG: user_id={user_id}, text={text[:30] if text else None}, subtype={subtype}")
 
     # Ignore bot messages only (temporarily allow subtypes to debug)
     if event.get("bot_id"):
@@ -800,20 +802,6 @@ def handle_message_event(event, client, logger):
             print(f"❌ Neo4j update failed for {user_id}: {e}")
     else:
         print(f"⚠️ No topics extracted, skipping Neo4j update")
-
-# Debug handler to see all events being received
-@app.event({"type": "message"})
-def debug_all_message_events(event, logger):
-    """Debug handler to see all message events."""
-    print(f"🚨 DEBUG: Raw message event received: {event}")
-    print(f"🚨 DEBUG: Event type: {event.get('type')}, subtype: {event.get('subtype')}, user: {event.get('user')}, text: {event.get('text')}")
-    print(f"🚨 DEBUG: Has bot_id: {event.get('bot_id')}, channel: {event.get('channel')}")
-    
-# Catch ALL events to see what's happening
-@app.event(lambda event: True)
-def debug_all_events(event, logger):
-    """Debug handler to see ALL events."""
-    print(f"🔥 DEBUG: ANY event received - type: {event.get('type')}, subtype: {event.get('subtype')}")
 
 if __name__ == "__main__":
     print("🤖 Starting MLAI Survey Bot with Slash Commands...")
