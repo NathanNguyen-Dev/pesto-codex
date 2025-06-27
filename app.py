@@ -758,10 +758,19 @@ def handle_message_event(event, client, logger):
 
     print(f"🔍 DEBUG: user_id={user_id}, text={text[:30] if text else None}, subtype={subtype}")
 
-    # Ignore bot messages, messages without text, or message subtypes (like file uploads, etc.)
-    if not user_id or not text or event.get("bot_id") or subtype:
-        print(f"🔍 DEBUG: Ignoring message - bot_id={event.get('bot_id')}, subtype={subtype}, has_text={bool(text)}")
+    # Ignore bot messages only (temporarily allow subtypes to debug)
+    if event.get("bot_id"):
+        print(f"🔍 DEBUG: Ignoring bot message - bot_id={event.get('bot_id')}")
         return
+    
+    # Check if we have required fields
+    if not user_id or not text:
+        print(f"🔍 DEBUG: Missing required fields - user_id={user_id}, has_text={bool(text)}")
+        return
+    
+    # Log subtype but don't filter yet
+    if subtype:
+        print(f"🔍 DEBUG: Message has subtype: {subtype} - processing anyway for debugging")
 
     print(f"📨 Message received in channel {channel} from user {user_id}: {text[:50]}...")
 
@@ -797,6 +806,14 @@ def handle_message_event(event, client, logger):
 def debug_all_message_events(event, logger):
     """Debug handler to see all message events."""
     print(f"🚨 DEBUG: Raw message event received: {event}")
+    print(f"🚨 DEBUG: Event type: {event.get('type')}, subtype: {event.get('subtype')}, user: {event.get('user')}, text: {event.get('text')}")
+    print(f"🚨 DEBUG: Has bot_id: {event.get('bot_id')}, channel: {event.get('channel')}")
+    
+# Catch ALL events to see what's happening
+@app.event(lambda event: True)
+def debug_all_events(event, logger):
+    """Debug handler to see ALL events."""
+    print(f"🔥 DEBUG: ANY event received - type: {event.get('type')}, subtype: {event.get('subtype')}")
 
 if __name__ == "__main__":
     print("🤖 Starting MLAI Survey Bot with Slash Commands...")
