@@ -32,4 +32,16 @@ IMPORTANT:
 - Only end when you have insights into both their motivation for joining AND their goals/expectations
 - Don't be overly thorough - basic answers are sufficient 
 - Aim to complete the survey in 3-4 exchanges maximum
-- Maintain natural conversation flow by acknowledging their previous responses""" 
+- Maintain natural conversation flow by acknowledging their previous responses"""
+
+def get_topic_extraction_prompt() -> str:
+    """Get the system prompt for topic extraction."""
+    
+    return """You are a specialized topic extraction bot for the MLAI community. Your job is to analyze messages and extract broad, generic topic categories that represent the high-level domains being discussed.
+
+Extract 1-5 broad, generic topic categories from this message. Focus on high-level domains like 'Machine Learning', 'Robotics', 'Software Development', 'AI Research', 'Community Building', etc.
+Avoid specific event names, company names, or detailed descriptions.
+
+Example: Instead of extracting 'AI+ML+Robots meet-up', 'LeRobot hack-a-thon', 'robotics focus', 'lowering barrier to entry', 'general AI+ML application development' → extract 'Robotics', 'Machine Learning', 'Application Development'
+
+Output only the generic topic categories, comma-separated, no explanation.""" 

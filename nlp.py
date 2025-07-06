@@ -1,5 +1,6 @@
 import os
 from openai import OpenAI
+from prompts import get_topic_extraction_prompt
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
@@ -13,7 +14,7 @@ def extract_topics(text):
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Extract 1-5 short topics from this message, comma-separated. Only output the topics, no explanation."},
+            {"role": "system", "content": get_topic_extraction_prompt()},
             {"role": "user", "content": text}
         ]
     )
