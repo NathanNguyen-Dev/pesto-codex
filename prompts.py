@@ -34,14 +34,68 @@ IMPORTANT:
 - Aim to complete the survey in 3-4 exchanges maximum
 - Maintain natural conversation flow by acknowledging their previous responses"""
 
-def get_topic_extraction_prompt() -> str:
-    """Get the system prompt for topic extraction."""
+def get_enhanced_topic_extraction_prompt() -> str:
+    """Enhanced prompt that extracts topics AND determines relationship types from Slack messages."""
     
-    return """You are a specialized topic extraction bot for the MLAI community. Your job is to analyze messages and extract broad, generic topic categories that represent the high-level domains being discussed.
+    return """You are a specialized topic and relationship extraction bot for the MLAI community. Your job is to analyze Slack messages and extract both the topics being discussed AND determine the type of relationship the user has with each topic.
 
-Extract 1-5 broad, generic topic categories from this message. Focus on high-level domains like 'Machine Learning', 'Robotics', 'Software Development', 'AI Research', 'Community Building', etc.
-Avoid specific event names, company names, or detailed descriptions.
+RELATIONSHIP TYPES:
+- MENTIONS: Casual mention or discussion (default for most cases)
+- WORKING_ON: Currently working on projects, building something, actively developing
+- INTERESTED_IN: Wants to learn, seeking help, expressing curiosity, asking questions
 
-Example: Instead of extracting 'AI+ML+Robots meet-up', 'LeRobot hack-a-thon', 'robotics focus', 'lowering barrier to entry', 'general AI+ML application development' → extract 'Robotics', 'Machine Learning', 'Application Development'
+ANALYSIS STEPS:
+1. Extract 1-5 broad, generic topic categories (avoid specific event names, companies)
+2. For each topic, determine the relationship type based on the message context
 
-Output only the generic topic categories, comma-separated, no explanation.""" 
+LANGUAGE PATTERNS:
+- WORKING_ON: "I'm building", "working on", "developing", "my project", "implementing"
+- INTERESTED_IN: "want to learn", "how do I", "looking for help", "getting started", "curious about"
+- MENTIONS: general discussion, sharing links, casual conversation
+
+OUTPUT FORMAT:
+For each topic, output: Topic|RelationshipType
+Use comma separation between entries.
+
+Example Input: "I'm building a computer vision model for my startup. Really curious about how transformers work too."
+Example Output: Computer Vision|WORKING_ON, Machine Learning|INTERESTED_IN"""
+
+def get_enhanced_interest_extraction_prompt() -> str:
+    """Enhanced prompt that extracts interests AND determines relationship types from LinkedIn profiles."""
+    
+    return """CRITICAL RULE: NEVER use "Innovation" for WORKING_ON. Innovation is abstract, not a concrete deliverable.
+
+You are classifying professional relationships. For each interest, apply this simple test:
+
+WORKING_ON Test: Can you touch, measure, or deliver this specific thing?
+- YES: Sales at Company X, Mobile App, Database, Platform, Website, System → WORKING_ON
+- NO: Innovation, Strategy, Leadership, Growth → SKIP (don't use WORKING_ON)
+- NO: Programming Languages (Python, Java, C++, JavaScript, Shell, etc.) → SKIP (these are tools, not deliverables)
+
+IS_EXPERT_IN Test: VERY STRICT - Only for proven experts with significant experience:
+- 5+ years professional experience in the field AND senior role (Lead, Principal, Director)
+- PhD with research publications and industry experience
+- Recognized expert with demonstrable track record
+- NEVER use for: students, recent graduates, junior roles, or anyone without substantial proven expertise
+- Programming languages CAN be expertise if 5+ years professional use
+
+INTERESTED_IN: For explicit learning goals ("want to learn", "passionate about") OR anyone not meeting expert criteria
+
+OUTPUT FORMAT (CRITICAL):
+- ONE interest per line
+- Format: Interest|RelationshipType
+- Separate entries with commas
+- Example: AI|IS_EXPERT_IN, Sales|WORKING_ON, Robotics|INTERESTED_IN
+- NO OTHER TEXT OR FORMATTING
+
+Keep topics 1-2 words max.
+
+BANNED WORKING_ON WORDS: Innovation, Strategy, Leadership, Growth, Technology, Solutions, Business, Operations, Management, Development, Transformation, Python, Java, JavaScript, C++, Shell, TypeScript, SQL, HTML, CSS, React, Node, Git
+
+EXAMPLES:
+"University student studying AI" → AI|INTERESTED_IN
+"PhD with 8 years experience building recommendation systems" → AI|IS_EXPERT_IN, Recommendations|WORKING_ON
+"Senior Principal Engineer with 10+ years at Google" → Software|IS_EXPERT_IN, AI|IS_EXPERT_IN
+"Doctor focused on healthcare innovation" → Medical|IS_EXPERT_IN
+"Working on mobile app development" → Mobile|WORKING_ON
+"10 years Python experience, currently building data pipelines" → Python|IS_EXPERT_IN, Data Pipelines|WORKING_ON""" 

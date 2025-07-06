@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 from slack_bolt import App
 from utils import (
     is_admin, safe_get_conversation_state, safe_update_conversation_state,
-    get_openai_response, notify_users_in_table, conversation_state,
-    extract_topics, update_knowledge_graph
+    get_openai_response, notify_users_in_table, conversation_state
 )
+from nlp import extract_topics_with_relationships
+from graph import update_knowledge_graph
 
 load_dotenv()
 
@@ -335,10 +336,13 @@ def debug_and_process_message_events(event, client, logger):
         print(f"❌ Failed to fetch display name for {user_id}: {e}")
         display_name = "unknown"
 
-    # Extract topics
+    # Extract topics with relationships
     try:
-        topics = extract_topics(text)
-        print(f"🧠 Extracted topics for {user_id} ({display_name}): {topics}")
+        topic_relationships = extract_topics_with_relationships(text)
+        # Extract just the topics for compatibility with existing graph update
+        topics = [topic for topic, relationship in topic_relationships]
+        print(f"🧠 Extracted topics with relationships for {user_id} ({display_name}): {topic_relationships}")
+        print(f"🧠 Topics only: {topics}")
     except Exception as e:
         print(f"❌ OpenAI topic extraction failed for {user_id}: {e}")
         topics = []

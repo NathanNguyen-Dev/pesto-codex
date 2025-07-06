@@ -33,12 +33,16 @@ def test_topic_extraction():
     print("\n🧠 Testing OpenAI topic extraction...")
     
     try:
-        from nlp import extract_topics
+        from nlp import extract_topics_with_relationships
         
         test_message = "I'm really excited about machine learning and artificial intelligence. I've been working on some deep learning projects with PyTorch lately."
-        topics = extract_topics(test_message)
+        topic_relationships = extract_topics_with_relationships(test_message)
         
-        print(f"✅ Topics extracted: {topics}")
+        # Extract just the topics for compatibility with existing code
+        topics = [topic for topic, relationship in topic_relationships]
+        
+        print(f"✅ Topics with relationships extracted: {topic_relationships}")
+        print(f"✅ Topics only: {topics}")
         return topics
         
     except Exception as e:

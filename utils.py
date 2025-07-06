@@ -10,7 +10,7 @@ from slack_sdk.errors import SlackApiError
 from pyairtable import Api
 from openai import OpenAI
 from prompts import get_system_prompt
-from nlp import extract_topics
+# Removed unused import: extract_topics
 from graph import update_knowledge_graph
 
 # Configuration
@@ -18,7 +18,6 @@ AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.environ.get("AIRTABLE_BASE_ID")
 AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE", "SlackUsers")
 AIRTABLE_COLUMN_NAME = os.environ.get("AIRTABLE_COLUMN_NAME", "SlackID")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ADMIN_USER_IDS = os.environ.get("ADMIN_USER_IDS", "").split(",")
 
 # Initialize clients
@@ -31,7 +30,7 @@ def get_openai_client():
     """Get OpenAI client with lazy loading."""
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        _openai_client = OpenAI()
     return _openai_client
 
 # In-memory conversation state storage with thread safety
@@ -198,14 +197,27 @@ def get_openai_response(user_id: str, user_message: str):
         messages.append({"role": "user", "content": user_message})
     
     try:
-        response = get_openai_client().chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=200,
-            temperature=0.1
+        response = get_openai_client().responses.create(
+            model="o3-mini",
+            reasoning={"effort": "low"},
+            input=[
+                {
+                    "role": "user", 
+                    "content": f"System instructions and conversation context:\n{messages[0]['content']}\n\n" + 
+                             "\n".join([f"{msg['role']}: {msg['content']}" for msg in messages[1:]])
+                }
+            ]
         )
         
-        bot_response = response.choices[0].message.content
+        if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+            print("Ran out of tokens during conversation response")
+            if response.output_text:
+                bot_response = response.output_text.strip()
+            else:
+                print("Ran out of tokens during reasoning")
+                bot_response = "I'm sorry, I need to think more about that. Could you please try again?"
+        else:
+            bot_response = response.output_text.strip()
         
         # Ensure we have a valid response
         if not bot_response or bot_response.strip() == "":

@@ -1,8 +1,8 @@
 slack-bolt==1.18.1
 python-dotenv==1.0.0
 pyairtable==2.3.3
-# For nlp.py (OpenAI topic extraction)
-openai==1.35.13
+# For nlp.py (OpenAI topic extraction with responses API and o3-mini reasoning)
+openai==1.93.0
 httpx==0.24.1
 # For graph.py (Neo4j integration)
 neo4j==5.28.1 
