@@ -795,22 +795,47 @@ def format_user_suggestions_with_personality(suggestions, original_message):
         print(f"   Users: {[u['name'] for u in users[:3]]}")
         print(f"   Original message preview: {original_message[:60]}...")
         
-        # Create the prompt for the LLM
-        context = f"""ORIGINAL MESSAGE: "{original_message}"
+        # Analyze message characteristics for context-aware response
+        message_length = len(original_message.split())
+        has_question = '?' in original_message
+        has_excitement = any(char in original_message for char in ['!', '🔥', '🚀', '💯', '🎉'])
+        is_casual = any(word in original_message.lower() for word in ['hey', 'yo', 'sup', 'lol', 'haha'])
+        is_technical = any(word in original_message.lower() for word in ['algorithm', 'model', 'architecture', 'implementation'])
+        
+        print(f"   📊 Message analysis: {message_length} words | Question: {has_question} | Excited: {has_excitement} | Casual: {is_casual} | Technical: {is_technical}")
+        print(f"   🎯 Using o3 model with enhanced context awareness (temp=1.4 for personality)")
+        
+        # Create enhanced context for the LLM
+        context = f"""You need to generate a tagging response that matches the tone and style of the original message.
 
-TOPICS DISCUSSED: {', '.join(topics)}
+ORIGINAL MESSAGE ANALYSIS:
+- Content: "{original_message}"
+- Length: {message_length} words
+- Has question: {has_question}
+- Has excitement: {has_excitement}  
+- Casual tone: {is_casual}
+- Technical tone: {is_technical}
 
-RELEVANT COMMUNITY MEMBERS:
+TOPICS BEING DISCUSSED: {', '.join(topics)}
+
+RELEVANT COMMUNITY MEMBERS TO TAG:
 {chr(10).join(user_context)}
 
-Generate a warm, enthusiastic one-line response that tags the most relevant people."""
+TASK: Generate ONE LINE that tags the most relevant people while matching the energy and tone of the original message. If the original message is:
+- Technical/formal → respond professionally 
+- Casual/excited → match that energy
+- Question-focused → connect them to someone who can help
+- Sharing something → connect people who'd be interested
+
+Your response should feel like a natural continuation of the conversation."""
         
-        # Get LLM response
+        # Get LLM response using o3 for better contextual formatting
         llm_start = time.time()
         client = OpenAI()
         response = client.responses.create(
-            model="o3-mini",
-            reasoning={"effort": "low"},
+            model="o3",
+            reasoning={"effort": "medium"},  # Higher effort for better context awareness
+            temperature=1.4,  # High creativity for personality and variation
             input=[
                 {
                     "role": "user",
@@ -820,7 +845,7 @@ Generate a warm, enthusiastic one-line response that tags the most relevant peop
         )
         llm_time = time.time() - llm_start
         
-        print(f"   OpenAI API call completed ({llm_time:.2f}s)")
+        print(f"   o3 API call completed ({llm_time:.2f}s)")
         
         if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
             print("   ⚠️ Token limit reached during response generation")

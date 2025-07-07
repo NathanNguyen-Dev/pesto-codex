@@ -500,7 +500,7 @@ if __name__ == "__main__":
     print("   ✅ Topic extraction with relationships (MENTIONS, WORKING_ON, INTERESTED_IN)")
     print("   ✅ Neo4j knowledge graph integration")
     print("   ✅ Intelligent user matching with priority ranking")
-    print("   ✅ LLM-powered warm personality responses")
+    print("   ✅ o3 model with temperature 1.4 for creative personality responses")
     print("   ✅ Anti-spam filtering and rate limiting")
     print("   ✅ User cooldown system with 1-hour protection")
     print("   ✅ Comprehensive performance logging")
