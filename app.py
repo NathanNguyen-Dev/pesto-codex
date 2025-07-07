@@ -315,17 +315,21 @@ def process_message_with_tagging(event, client, logger):
     print(f"   User: {event.get('user')} | Channel: {event.get('channel')}")
     print(f"   Text Preview: {event.get('text', '')[:80]}...")
     
+    # Early exit conditions - check threads first to save AI credits
+    if event.get("thread_ts"):
+        print(f"⏩ SKIP: Threaded reply (thread_ts={event.get('thread_ts')}) - only processing original messages")
+        return
+    
+    if event.get("bot_id"):
+        print(f"⏩ SKIP: Bot message (bot_id={event.get('bot_id')})")
+        return
+
     # Extract event data
     user_id = event.get("user")
     text = event.get("text")
     ts = event.get("ts")
     channel = event.get("channel")
     subtype = event.get("subtype")
-
-    # Early exit conditions
-    if event.get("bot_id"):
-        print(f"⏩ SKIP: Bot message (bot_id={event.get('bot_id')})")
-        return
     
     if not user_id or not text:
         print(f"⏩ SKIP: Missing required fields (user_id={bool(user_id)}, text={bool(text)})")
