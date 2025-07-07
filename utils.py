@@ -835,7 +835,6 @@ Your response should feel like a natural continuation of the conversation."""
         response = client.responses.create(
             model="o3",
             reasoning={"effort": "medium"},  # Higher effort for better context awareness
-            temperature=1.4,  # High creativity for personality and variation
             input=[
                 {
                     "role": "user",
