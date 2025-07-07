@@ -803,7 +803,7 @@ def format_user_suggestions_with_personality(suggestions, original_message):
         is_technical = any(word in original_message.lower() for word in ['algorithm', 'model', 'architecture', 'implementation'])
         
         print(f"   📊 Message analysis: {message_length} words | Question: {has_question} | Excited: {has_excitement} | Casual: {is_casual} | Technical: {is_technical}")
-        print(f"   🎯 Using o3 model with enhanced context awareness (temp=1.4 for personality)")
+        print(f"   🎯 Using o3-mini model with enhanced context awareness")
         
         # Create enhanced context for the LLM
         context = f"""You need to generate a tagging response that matches the tone and style of the original message.
@@ -821,8 +821,7 @@ TOPICS BEING DISCUSSED: {', '.join(topics)}
 RELEVANT COMMUNITY MEMBERS TO TAG:
 {chr(10).join(user_context)}
 
-TASK: Generate ONE LINE that tags the most relevant people while matching the energy and tone of the original message. If the original message is:
-- Technical/formal → respond professionally 
+TASK: Generate ONE LINE that tags the most relevant people while matching the energy and tone of the original message.
 - Casual/excited → match that energy
 - Question-focused → connect them to someone who can help
 - Sharing something → connect people who'd be interested
@@ -833,8 +832,7 @@ Your response should feel like a natural continuation of the conversation."""
         llm_start = time.time()
         client = OpenAI()
         response = client.responses.create(
-            model="o3",
-            reasoning={"effort": "medium"},  # Higher effort for better context awareness
+            model="o3-mini", 
             input=[
                 {
                     "role": "user",
@@ -844,7 +842,7 @@ Your response should feel like a natural continuation of the conversation."""
         )
         llm_time = time.time() - llm_start
         
-        print(f"   o3 API call completed ({llm_time:.2f}s)")
+        print(f"   o3-mini API call completed ({llm_time:.2f}s)")
         
         if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
             print("   ⚠️ Token limit reached during response generation")
