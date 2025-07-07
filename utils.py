@@ -9,7 +9,12 @@ from datetime import datetime, timedelta
 from slack_sdk.errors import SlackApiError
 from pyairtable import Api
 from openai import OpenAI
-from prompts import get_system_prompt, get_warm_tagging_personality_prompt
+from prompts import (
+    get_system_prompt, 
+    get_warm_tagging_personality_prompt,
+    get_topic_expansion_prompt,
+    get_tagging_decision_prompt
+)
 # Removed unused import: extract_topics
 from graph import update_knowledge_graph, get_relevant_users_for_topics
 
@@ -415,12 +420,103 @@ def notify_users_in_table(app_client, table_id: str = None, column_name: str = N
         print(f"📊 Final results: {success_count}/{len(user_ids)} DMs sent successfully")
         return success_count 
 
+def expand_topics_for_matching(canonical_topics):
+    """
+    Expand canonical topics to include synonyms and variations using o3-mini for better matching.
+    
+    Args:
+        canonical_topics (list): List of canonical topic names
+    
+    Returns:
+        list: Expanded list including original topics and their synonyms
+    """
+    import time
+    start_time = time.time()
+    
+    print(f"🔍 TOPIC EXPANSION: Expanding {len(canonical_topics)} canonical topics using o3-mini")
+    print(f"   Canonical topics: {canonical_topics}")
+    
+    try:
+        # Create prompt for LLM to expand topics
+        topics_str = ", ".join(canonical_topics)
+        prompt = get_topic_expansion_prompt(topics_str)
+
+        # Call o3-mini
+        llm_start = time.time()
+        client = OpenAI()
+        response = client.responses.create(
+            model="o3-mini",
+            reasoning={"effort": "low"},
+            input=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        llm_time = time.time() - llm_start
+        
+        print(f"   o3-mini API call completed ({llm_time:.2f}s)")
+        
+        # Handle response
+        if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+            print("   ⚠️ Token limit reached during topic expansion")
+            if response.output_text:
+                content = response.output_text.strip()
+                print(f"   Partial response recovered")
+            else:
+                print("   ❌ No response text available - falling back to original topics")
+                return canonical_topics
+        else:
+            content = response.output_text.strip()
+            print(f"   ✅ Full expansion received")
+        
+        # Parse the response
+        expanded_topics = []
+        seen_topics = set()
+        
+        # Split by | to get different topic groups
+        topic_groups = content.split('|')
+        
+        for group in topic_groups:
+            # Split by comma to get individual terms
+            terms = [term.strip() for term in group.split(',')]
+            for term in terms:
+                term = term.strip()
+                if term and term not in seen_topics:
+                    expanded_topics.append(term)
+                    seen_topics.add(term)
+        
+        # Ensure all original topics are included
+        for topic in canonical_topics:
+            if topic not in seen_topics:
+                expanded_topics.append(topic)
+                seen_topics.add(topic)
+        
+        total_time = time.time() - start_time
+        print(f"🔍 TOPIC EXPANSION: Complete ({total_time:.2f}s)")
+        print(f"   Original: {len(canonical_topics)} topics")
+        print(f"   Expanded: {len(expanded_topics)} topics")
+        print(f"   Expansion ratio: {len(expanded_topics)/len(canonical_topics):.1f}x")
+        
+        return expanded_topics
+        
+    except Exception as e:
+        total_time = time.time() - start_time
+        print(f"❌ TOPIC EXPANSION FAILED: {e} ({total_time:.2f}s)")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback to original topics
+        print(f"   🔄 Falling back to original topics: {canonical_topics}")
+        return canonical_topics
+
 def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_suggestions=3):
     """
     Find relevant users for discussed topics and format suggestions.
     
     Args:
-        topics (list): List of topics being discussed
+        topics (list): List of canonical topics being discussed
         exclude_user_id (str, optional): User ID to exclude (usually message author)
         channel_id (str, optional): Channel ID for context
         max_suggestions (int): Maximum number of user suggestions to return
@@ -431,12 +527,16 @@ def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_su
     import time
     start_time = time.time()
     
-    print(f"🔍 USER SUGGESTION: Starting for topics={topics}, exclude={exclude_user_id}")
+    print(f"🔍 USER SUGGESTION: Starting for canonical topics={topics}, exclude={exclude_user_id}")
     
     try:
-        # Get relevant users for all topics
+        # Expand topics to include synonyms for better matching
+        expanded_topics = expand_topics_for_matching(topics)
+        print(f"   Expanded to {len(expanded_topics)} topic variations: {expanded_topics}")
+        
+        # Get relevant users for all expanded topics
         graph_start = time.time()
-        relevant_users = get_relevant_users_for_topics(topics, exclude_user_id, limit=max_suggestions)
+        relevant_users = get_relevant_users_for_topics(expanded_topics, exclude_user_id, limit=max_suggestions)
         graph_time = time.time() - graph_start
         
         print(f"   Graph query completed ({graph_time:.2f}s)")
@@ -449,17 +549,25 @@ def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_su
         total_matches = sum(len(users) for users in relevant_users.values())
         print(f"   Found {total_matches} total user matches across {len(relevant_users)} topics")
         
-        # Format suggestions
+        # Format suggestions (use original canonical topics, not expanded ones)
         suggestions = {
-            "topics": topics,
+            "topics": topics,  # Keep original canonical topics for consistency
             "users": [],
             "message": ""
         }
         
         # Collect unique users across all topics with their best relationship
         user_map = {}
-        for topic, users in relevant_users.items():
-            print(f"   Topic '{topic}': {len(users)} users")
+        for found_topic, users in relevant_users.items():
+            print(f"   Topic '{found_topic}': {len(users)} users")
+            
+            # Map found topic back to canonical topic for consistency
+            canonical_topic = found_topic
+            for canonical in topics:
+                if canonical.lower() in found_topic.lower() or found_topic.lower() in canonical.lower():
+                    canonical_topic = canonical
+                    break
+            
             for user in users:
                 user_id = user['user_id']
                 if user_id not in user_map:
@@ -472,10 +580,12 @@ def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_su
                         'topics': []
                     }
                 
-                # Add topic and relationship info
-                user_map[user_id]['topics'].append(topic)
+                # Add canonical topic and relationship info
+                if canonical_topic not in user_map[user_id]['topics']:
+                    user_map[user_id]['topics'].append(canonical_topic)
+                    
                 user_map[user_id]['relationships'].append({
-                    'topic': topic,
+                    'topic': canonical_topic,
                     'relationship': user['relationship'],
                     'activity_level': user['activity_level']
                 })
@@ -667,7 +777,7 @@ def format_user_suggestions(suggestions, original_message=""):
 
 def should_suggest_users(channel_id, topics, last_suggestion_time=None):
     """
-    Determine if we should suggest users based on various criteria.
+    Determine if we should suggest users using o3-mini mini agent.
     
     Args:
         channel_id (str): Channel ID
@@ -677,36 +787,76 @@ def should_suggest_users(channel_id, topics, last_suggestion_time=None):
     Returns:
         bool: Whether to suggest users
     """
-    print(f"🤔 SHOULD SUGGEST: Evaluating for channel {channel_id}")
-    print(f"   Topics: {topics}")
+    import time
+    start_time = time.time()
     
-    # For now, simple logic - suggest if we have topics and it's a public channel
-    # In the future, we can add more sophisticated rules:
-    # - Rate limiting per channel
-    # - User preferences
-    # - Channel-specific settings
-    # - Time-based throttling
+    print(f"🤔 SHOULD SUGGEST: Evaluating for channel {channel_id} using o3-mini")
+    print(f"   Topics: {topics}")
     
     if not topics:
         print(f"   ❌ No topics provided")
         return False
     
-    # Only suggest for significant topics (avoid spam)
-    significant_topics = ['Machine Learning', 'AI', 'Robotics', 'Data Science', 
-                         'Software Engineering', 'Research', 'Startups', 'Product']
-    
-    has_significant_topic = any(topic in significant_topics for topic in topics)
-    matching_topics = [topic for topic in topics if topic in significant_topics]
-    
-    print(f"   Significant topics found: {matching_topics}")
-    
-    if not has_significant_topic:
-        print(f"   ❌ No significant topics (avoiding spam)")
-        return False
-    
-    if len(topics) > 3:
+    if len(topics) > 8:  # Hard limit to avoid overwhelming
         print(f"   ❌ Too many topics ({len(topics)}) - avoiding overwhelming discussions")
         return False
     
-    print(f"   ✅ Should suggest users")
-    return True 
+    try:
+        # Create prompt for mini agent to decide
+        topics_str = ", ".join(topics)
+        prompt = get_tagging_decision_prompt(channel_id, topics_str)
+
+        # Call o3-mini
+        llm_start = time.time()
+        client = OpenAI()
+        response = client.responses.create(
+            model="o3-mini",
+            reasoning={"effort": "low"},
+            input=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
+        llm_time = time.time() - llm_start
+        
+        print(f"   o3-mini decision call completed ({llm_time:.2f}s)")
+        
+        # Handle response
+        if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+            print("   ⚠️ Token limit reached during decision")
+            if response.output_text:
+                decision = response.output_text.strip().upper()
+                print(f"   Partial decision recovered: {decision}")
+            else:
+                print("   ❌ No decision available - defaulting to NO")
+                return False
+        else:
+            decision = response.output_text.strip().upper()
+            print(f"   ✅ Full decision received: {decision}")
+        
+        # Parse decision
+        should_suggest = decision == "YES"
+        
+        total_time = time.time() - start_time
+        print(f"🤔 SHOULD SUGGEST: Decision '{decision}' → {should_suggest} ({total_time:.2f}s)")
+        
+        return should_suggest
+        
+    except Exception as e:
+        total_time = time.time() - start_time
+        print(f"❌ SHOULD SUGGEST FAILED: {e} ({total_time:.2f}s)")
+        import traceback
+        traceback.print_exc()
+        
+        # Conservative fallback - only suggest for clearly tech topics
+        print(f"   🔄 Falling back to conservative heuristic")
+        tech_keywords = ['ai', 'ml', 'machine learning', 'artificial intelligence', 
+                        'data', 'software', 'programming', 'robotics', 'research']
+        
+        has_tech = any(keyword in topic.lower() for topic in topics for keyword in tech_keywords)
+        fallback_decision = has_tech and len(topics) <= 3
+        
+        print(f"   Fallback decision: {fallback_decision} (has_tech={has_tech}, topic_count={len(topics)})")
+        return fallback_decision 

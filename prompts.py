@@ -145,4 +145,61 @@ RULES:
 5. Tag 1-3 people maximum per response
 6. Choose the most relevant people based on their relationship to the topic
 
-OUTPUT: Just the single line response, nothing else.""" 
+OUTPUT: Just the single line response, nothing else."""
+
+def get_topic_expansion_prompt(topics_str: str) -> str:
+    """Prompt for expanding canonical topics to include synonyms and variations for better matching."""
+    
+    return f"""You are a topic expansion assistant. For each topic provided, generate a FOCUSED list of the most common synonyms and variations that people might use when discussing the same concept.
+
+RULES:
+1. Include the original topic
+2. Add only the most common synonyms and variations (e.g., "AI" → "Artificial Intelligence", "ML")
+3. Add abbreviated and full forms
+4. Keep expansion MINIMAL - maximum 3-5 variations per topic
+5. Keep terms concise (1-3 words each)
+6. Avoid duplicates
+7. Focus on direct synonyms, not related sub-fields
+
+TOPICS TO EXPAND: {topics_str}
+
+OUTPUT FORMAT:
+For each topic, output all variations separated by commas, then use | to separate different topics.
+Example: AI, Artificial Intelligence, ML, Machine Learning | Medical, Healthcare, MedTech
+
+Only output the expanded terms, no other text."""
+
+def get_tagging_decision_prompt(channel_id: str, topics_str: str) -> str:
+    """Prompt for deciding whether to suggest users for tagging based on topics and context."""
+    
+    return f"""You are a tagging decision agent for a professional MLAI community Slack workspace. Your job is to decide whether to suggest relevant community members when someone discusses certain topics.
+
+CONTEXT:
+- This is a professional AI/ML community
+- Channel: {channel_id}
+- Topics discussed: {topics_str}
+
+DECISION CRITERIA:
+Consider suggesting users if topics are:
+1. Professional/technical subjects that benefit from expert input
+2. Relevant to the MLAI community (AI, ML, data science, tech, research, business, etc.)
+3. Discussion-worthy topics where connecting people adds value
+4. Not too generic or casual
+
+AVOID suggesting for:
+- Very casual conversation
+- Personal/private matters
+- Off-topic discussions unrelated to tech/AI/ML/business
+- Topics that are too broad or generic
+- Simple greetings or small talk
+
+EXAMPLES:
+"AI, Medical" → YES (technical, relevant)
+"Python, Programming" → YES (technical, relevant)
+"Weather, Sports" → NO (off-topic)
+"Coffee, Chat" → NO (casual)
+"Startups, Funding" → YES (business relevant)
+"Food, Lunch" → NO (casual)
+
+OUTPUT:
+Respond with only "YES" or "NO" - nothing else.""" 
