@@ -163,6 +163,8 @@ progress.md
 
 # Markdown files
 *.md
+# Allow README.md to be tracked
+!README.md
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
