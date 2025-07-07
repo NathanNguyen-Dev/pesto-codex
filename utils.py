@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from slack_sdk.errors import SlackApiError
 from pyairtable import Api
 from openai import OpenAI
-from prompts import get_system_prompt
+from prompts import get_system_prompt, get_warm_tagging_personality_prompt
 # Removed unused import: extract_topics
-from graph import update_knowledge_graph
+from graph import update_knowledge_graph, get_relevant_users_for_topics
 
 # Configuration
 AIRTABLE_API_KEY = os.environ.get("AIRTABLE_API_KEY")
@@ -414,3 +414,299 @@ def notify_users_in_table(app_client, table_id: str = None, column_name: str = N
             
         print(f"📊 Final results: {success_count}/{len(user_ids)} DMs sent successfully")
         return success_count 
+
+def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_suggestions=3):
+    """
+    Find relevant users for discussed topics and format suggestions.
+    
+    Args:
+        topics (list): List of topics being discussed
+        exclude_user_id (str, optional): User ID to exclude (usually message author)
+        channel_id (str, optional): Channel ID for context
+        max_suggestions (int): Maximum number of user suggestions to return
+    
+    Returns:
+        dict: Formatted suggestions with users and rationale
+    """
+    import time
+    start_time = time.time()
+    
+    print(f"🔍 USER SUGGESTION: Starting for topics={topics}, exclude={exclude_user_id}")
+    
+    try:
+        # Get relevant users for all topics
+        graph_start = time.time()
+        relevant_users = get_relevant_users_for_topics(topics, exclude_user_id, limit=max_suggestions)
+        graph_time = time.time() - graph_start
+        
+        print(f"   Graph query completed ({graph_time:.2f}s)")
+        
+        if not relevant_users:
+            print(f"   No relevant users found in graph")
+            return None
+        
+        # Log raw results
+        total_matches = sum(len(users) for users in relevant_users.values())
+        print(f"   Found {total_matches} total user matches across {len(relevant_users)} topics")
+        
+        # Format suggestions
+        suggestions = {
+            "topics": topics,
+            "users": [],
+            "message": ""
+        }
+        
+        # Collect unique users across all topics with their best relationship
+        user_map = {}
+        for topic, users in relevant_users.items():
+            print(f"   Topic '{topic}': {len(users)} users")
+            for user in users:
+                user_id = user['user_id']
+                if user_id not in user_map:
+                    user_map[user_id] = {
+                        'user_id': user_id,
+                        'name': user['name'],
+                        'relationships': [],
+                        'best_relationship': user['relationship'],
+                        'activity_level': user['activity_level'],
+                        'topics': []
+                    }
+                
+                # Add topic and relationship info
+                user_map[user_id]['topics'].append(topic)
+                user_map[user_id]['relationships'].append({
+                    'topic': topic,
+                    'relationship': user['relationship'],
+                    'activity_level': user['activity_level']
+                })
+                
+                # Keep the best relationship (expert > working > interested)
+                if user['relationship'] == 'IS_EXPERT_IN':
+                    user_map[user_id]['best_relationship'] = 'IS_EXPERT_IN'
+                elif user['relationship'] == 'WORKING_ON' and user_map[user_id]['best_relationship'] != 'IS_EXPERT_IN':
+                    user_map[user_id]['best_relationship'] = 'WORKING_ON'
+        
+        print(f"   Consolidated to {len(user_map)} unique users")
+        
+        # Sort by relationship priority and activity level
+        sorted_users = sorted(user_map.values(), key=lambda u: (
+            1 if u['best_relationship'] == 'IS_EXPERT_IN' else 
+            2 if u['best_relationship'] == 'WORKING_ON' else 3,
+            -u['activity_level']
+        ))
+        
+        # Take top suggestions
+        top_users = sorted_users[:max_suggestions]
+        suggestions['users'] = top_users
+        
+        # Log final selection
+        print(f"   Selected top {len(top_users)} users:")
+        for i, user in enumerate(top_users):
+            rel_count = len(user['relationships'])
+            print(f"     {i+1}. {user['name']} - {user['best_relationship']} ({rel_count} relationships)")
+        
+        processing_time = time.time() - start_time
+        print(f"🔍 USER SUGGESTION: Complete ({processing_time:.2f}s)")
+        
+        return suggestions
+        
+    except Exception as e:
+        processing_time = time.time() - start_time
+        print(f"❌ USER SUGGESTION FAILED: {e} ({processing_time:.2f}s)")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def format_user_suggestions_with_personality(suggestions, original_message):
+    """
+    Use LLM to generate warm, engaging tagging responses based on personality prompt.
+    
+    Args:
+        suggestions (dict): Suggestions from suggest_relevant_users()
+        original_message (str): The original message that triggered the tagging
+    
+    Returns:
+        str: LLM-generated warm tagging response
+    """
+    import time
+    start_time = time.time()
+    
+    if not suggestions or not suggestions['users']:
+        print(f"❌ LLM FORMATTING: No suggestions provided")
+        return None
+    
+    print(f"🎭 LLM FORMATTING: Generating warm response for {len(suggestions['users'])} users")
+    
+    try:
+        # Prepare context for the LLM
+        topics = suggestions['topics']
+        users = suggestions['users']
+        
+        # Create user context with their expertise
+        user_context = []
+        for user in users[:3]:  # Limit to top 3 users
+            user_id = user['user_id']
+            name = user['name']
+            best_rel = user['best_relationship']
+            user_topics = user['topics']
+            
+            # Create expertise description
+            if best_rel == 'IS_EXPERT_IN':
+                expertise = f"expert in {', '.join(user_topics)}"
+            elif best_rel == 'WORKING_ON':
+                expertise = f"working on {', '.join(user_topics)}"
+            else:
+                expertise = f"interested in {', '.join(user_topics)}"
+            
+            user_context.append(f"<@{user_id}> ({name} - {expertise})")
+        
+        print(f"   Topics: {topics}")
+        print(f"   Users: {[u['name'] for u in users[:3]]}")
+        print(f"   Original message preview: {original_message[:60]}...")
+        
+        # Create the prompt for the LLM
+        context = f"""ORIGINAL MESSAGE: "{original_message}"
+
+TOPICS DISCUSSED: {', '.join(topics)}
+
+RELEVANT COMMUNITY MEMBERS:
+{chr(10).join(user_context)}
+
+Generate a warm, enthusiastic one-line response that tags the most relevant people."""
+        
+        # Get LLM response
+        llm_start = time.time()
+        client = OpenAI()
+        response = client.responses.create(
+            model="o3-mini",
+            reasoning={"effort": "low"},
+            input=[
+                {
+                    "role": "user",
+                    "content": f"{get_warm_tagging_personality_prompt()}\n\n{context}"
+                }
+            ]
+        )
+        llm_time = time.time() - llm_start
+        
+        print(f"   OpenAI API call completed ({llm_time:.2f}s)")
+        
+        if response.status == "incomplete" and response.incomplete_details.reason == "max_output_tokens":
+            print("   ⚠️ Token limit reached during response generation")
+            if response.output_text:
+                warm_response = response.output_text.strip()
+                print(f"   Partial response recovered: {warm_response}")
+            else:
+                print("   ❌ No response text available - token limit hit during reasoning")
+                return None
+        else:
+            warm_response = response.output_text.strip()
+            print(f"   ✅ Full response generated: {warm_response}")
+        
+        # Validate response quality
+        if not warm_response:
+            print(f"   ❌ Empty response from LLM")
+            return None
+        
+        # Check if response contains user mentions
+        mentioned_users = [u for u in users if f"<@{u['user_id']}>" in warm_response]
+        print(f"   Response mentions {len(mentioned_users)} users")
+        
+        if not mentioned_users:
+            print(f"   ⚠️ Response doesn't mention any users - may be malformed")
+        
+        total_time = time.time() - start_time
+        print(f"🎭 LLM FORMATTING: Complete ({total_time:.2f}s)")
+        
+        return warm_response
+        
+    except Exception as e:
+        total_time = time.time() - start_time
+        print(f"❌ LLM FORMATTING FAILED: {e} ({total_time:.2f}s)")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback to simple format
+        print(f"   🔄 Falling back to simple formatting")
+        return format_user_suggestions_simple(suggestions)
+
+def format_user_suggestions_simple(suggestions):
+    """
+    Simple fallback formatting if LLM fails.
+    
+    Args:
+        suggestions (dict): Suggestions from suggest_relevant_users()
+    
+    Returns:
+        str: Simple formatted message
+    """
+    if not suggestions or not suggestions['users']:
+        return None
+    
+    users = suggestions['users']
+    
+    # Simple format with first user
+    if users:
+        user = users[0]
+        return f"<@{user['user_id']}>, this one's for you!"
+    
+    return None
+
+def format_user_suggestions(suggestions, original_message=""):
+    """
+    Format user suggestions with warm personality (maintains backward compatibility).
+    
+    Args:
+        suggestions (dict): Suggestions from suggest_relevant_users()
+        original_message (str): The original message that triggered the tagging
+    
+    Returns:
+        str: Formatted message with warm personality
+    """
+    return format_user_suggestions_with_personality(suggestions, original_message)
+
+def should_suggest_users(channel_id, topics, last_suggestion_time=None):
+    """
+    Determine if we should suggest users based on various criteria.
+    
+    Args:
+        channel_id (str): Channel ID
+        topics (list): Topics being discussed
+        last_suggestion_time (datetime, optional): Last time suggestions were made
+    
+    Returns:
+        bool: Whether to suggest users
+    """
+    print(f"🤔 SHOULD SUGGEST: Evaluating for channel {channel_id}")
+    print(f"   Topics: {topics}")
+    
+    # For now, simple logic - suggest if we have topics and it's a public channel
+    # In the future, we can add more sophisticated rules:
+    # - Rate limiting per channel
+    # - User preferences
+    # - Channel-specific settings
+    # - Time-based throttling
+    
+    if not topics:
+        print(f"   ❌ No topics provided")
+        return False
+    
+    # Only suggest for significant topics (avoid spam)
+    significant_topics = ['Machine Learning', 'AI', 'Robotics', 'Data Science', 
+                         'Software Engineering', 'Research', 'Startups', 'Product']
+    
+    has_significant_topic = any(topic in significant_topics for topic in topics)
+    matching_topics = [topic for topic in topics if topic in significant_topics]
+    
+    print(f"   Significant topics found: {matching_topics}")
+    
+    if not has_significant_topic:
+        print(f"   ❌ No significant topics (avoiding spam)")
+        return False
+    
+    if len(topics) > 3:
+        print(f"   ❌ Too many topics ({len(topics)}) - avoiding overwhelming discussions")
+        return False
+    
+    print(f"   ✅ Should suggest users")
+    return True 

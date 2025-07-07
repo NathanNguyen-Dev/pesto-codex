@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from slack_bolt import App
 from utils import (
     is_admin, safe_get_conversation_state, safe_update_conversation_state,
-    get_openai_response, notify_users_in_table, conversation_state
+    get_openai_response, notify_users_in_table, conversation_state,
+    suggest_relevant_users, format_user_suggestions, should_suggest_users
 )
 from nlp import extract_topics_with_relationships
 from graph import update_knowledge_graph
@@ -295,82 +296,210 @@ def handle_start_dm_button(ack, body, client):
     except Exception as e:
         print(f"Error sending DM to {user_id}: {e}")
 
-# Single debug handler to avoid conflicts
+# Enhanced message handler with comprehensive logging
 @app.event("message")
-def debug_and_process_message_events(event, client, logger):
-    """Debug and process all message events."""
-    print(f"🚨 DEBUG: Message event received!")
-    print(f"🚨 DEBUG: Event data - type: {event.get('type')}, subtype: {event.get('subtype')}")
-    print(f"🚨 DEBUG: User: {event.get('user')}, text: {event.get('text', '')[:50]}...")
-    print(f"🚨 DEBUG: Channel: {event.get('channel')}, bot_id: {event.get('bot_id')}")
+def process_message_with_tagging(event, client, logger):
+    """Process message events with topic extraction and smart tagging."""
+    import time
+    start_time = time.time()
     
-    # Now process for topic extraction (moved from the other handler)
+    # Basic event logging
+    print(f"📨 MESSAGE EVENT | {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   Type: {event.get('type')} | Subtype: {event.get('subtype')}")
+    print(f"   User: {event.get('user')} | Channel: {event.get('channel')}")
+    print(f"   Text Preview: {event.get('text', '')[:80]}...")
+    
+    # Extract event data
     user_id = event.get("user")
     text = event.get("text")
     ts = event.get("ts")
     channel = event.get("channel")
     subtype = event.get("subtype")
 
-    # Ignore bot messages only (temporarily allow subtypes to debug)
+    # Early exit conditions
     if event.get("bot_id"):
-        print(f"🔍 DEBUG: Ignoring bot message - bot_id={event.get('bot_id')}")
+        print(f"⏩ SKIP: Bot message (bot_id={event.get('bot_id')})")
         return
     
-    # Check if we have required fields
     if not user_id or not text:
-        print(f"🔍 DEBUG: Missing required fields - user_id={user_id}, has_text={bool(text)}")
+        print(f"⏩ SKIP: Missing required fields (user_id={bool(user_id)}, text={bool(text)})")
         return
     
-    # Log subtype but don't filter yet
-    if subtype:
-        print(f"🔍 DEBUG: Message has subtype: {subtype} - processing anyway for debugging")
+    if subtype and subtype in ['message_changed', 'message_deleted']:
+        print(f"⏩ SKIP: Message subtype '{subtype}' - not processing")
+        return
 
-    print(f"📨 Message received in channel {channel} from user {user_id}: {text[:50]}...")
+    print(f"🔄 PROCESSING: Message from {user_id} in {channel}")
 
-    # Get user display name
+    # Get user display name with timing
+    display_name = "unknown"
     try:
+        user_lookup_start = time.time()
         user_info = client.users_info(user=user_id)
         display_name = user_info["user"].get("profile", {}).get("display_name") or user_info["user"].get("real_name", "unknown")
-        print(f"👤 User info: {user_id} = {display_name}")
+        user_lookup_time = time.time() - user_lookup_start
+        print(f"👤 USER LOOKUP: {user_id} = '{display_name}' ({user_lookup_time:.2f}s)")
     except Exception as e:
-        print(f"❌ Failed to fetch display name for {user_id}: {e}")
-        display_name = "unknown"
+        print(f"❌ USER LOOKUP FAILED: {user_id} - {e}")
 
-    # Extract topics with relationships
+    # Topic extraction with timing and detailed logging
+    topics = []
+    topic_relationships = []
     try:
+        extraction_start = time.time()
         topic_relationships = extract_topics_with_relationships(text)
-        # Extract just the topics for compatibility with existing graph update
         topics = [topic for topic, relationship in topic_relationships]
-        print(f"🧠 Extracted topics with relationships for {user_id} ({display_name}): {topic_relationships}")
-        print(f"🧠 Topics only: {topics}")
+        extraction_time = time.time() - extraction_start
+        
+        print(f"🧠 TOPIC EXTRACTION: SUCCESS ({extraction_time:.2f}s)")
+        print(f"   Relationships: {topic_relationships}")
+        print(f"   Topics: {topics}")
+        
+        # Log topic extraction metrics
+        if topic_relationships:
+            relationship_counts = {}
+            for _, relationship in topic_relationships:
+                relationship_counts[relationship] = relationship_counts.get(relationship, 0) + 1
+            print(f"   Relationship distribution: {relationship_counts}")
+        
     except Exception as e:
-        print(f"❌ OpenAI topic extraction failed for {user_id}: {e}")
-        topics = []
+        extraction_time = time.time() - extraction_start
+        print(f"❌ TOPIC EXTRACTION FAILED: {user_id} - {e} ({extraction_time:.2f}s)")
 
-    # Update Neo4j
+    # Neo4j update with timing
+    neo4j_updated = False
     if topics:
         try:
+            neo4j_start = time.time()
             update_knowledge_graph(user_id, display_name, topics, ts)
-            print(f"📊 Updated Neo4j for {user_id} with {len(topics)} topics")
+            neo4j_time = time.time() - neo4j_start
+            neo4j_updated = True
+            print(f"📊 NEO4J UPDATE: SUCCESS for {user_id} with {len(topics)} topics ({neo4j_time:.2f}s)")
         except Exception as e:
-            print(f"❌ Neo4j update failed for {user_id}: {e}")
+            neo4j_time = time.time() - neo4j_start
+            print(f"❌ NEO4J UPDATE FAILED: {user_id} - {e} ({neo4j_time:.2f}s)")
     else:
-        print(f"⚠️ No topics extracted, skipping Neo4j update")
+        print(f"⏩ NEO4J: Skip - no topics extracted")
+
+    # Smart tagging with comprehensive logging
+    tagging_attempted = False
+    tagging_successful = False
+    suggested_users_count = 0
+    
+    if topics and should_suggest_users(channel, topics):
+        tagging_attempted = True
+        try:
+            tagging_start = time.time()
+            print(f"🏷️ TAGGING: Starting suggestion process for topics: {topics}")
+            
+            # Find relevant users
+            suggestions = suggest_relevant_users(topics, exclude_user_id=user_id, channel_id=channel)
+            
+            if suggestions:
+                suggested_users_count = len(suggestions['users'])
+                print(f"🔍 USER MATCHING: Found {suggested_users_count} relevant users")
+                
+                # Log user details
+                for i, user in enumerate(suggestions['users']):
+                    print(f"   {i+1}. {user['name']} ({user['user_id']}) - {user['best_relationship']} in {user['topics']}")
+                
+                # Generate warm response
+                llm_start = time.time()
+                suggestion_message = format_user_suggestions(suggestions, original_message=text)
+                llm_time = time.time() - llm_start
+                
+                if suggestion_message:
+                    print(f"🎭 LLM RESPONSE: Generated warm message ({llm_time:.2f}s)")
+                    print(f"   Message: {suggestion_message}")
+                    
+                    # Send to Slack
+                    slack_start = time.time()
+                    response = client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=ts,
+                        text=suggestion_message,
+                        unfurl_links=False,
+                        unfurl_media=False
+                    )
+                    slack_time = time.time() - slack_start
+                    
+                    if response.get("ok"):
+                        tagging_successful = True
+                        print(f"✅ SLACK POST: Warm tagging response sent ({slack_time:.2f}s)")
+                        print(f"   Message TS: {response.get('ts')}")
+                    else:
+                        print(f"❌ SLACK POST FAILED: {response}")
+                else:
+                    print(f"❌ LLM RESPONSE: Failed to generate message ({llm_time:.2f}s)")
+            else:
+                print(f"⚠️ USER MATCHING: No relevant users found for topics: {topics}")
+                
+            tagging_time = time.time() - tagging_start
+            print(f"🏷️ TAGGING: Process completed ({tagging_time:.2f}s)")
+            
+        except Exception as e:
+            tagging_time = time.time() - tagging_start
+            print(f"❌ TAGGING FAILED: {e} ({tagging_time:.2f}s)")
+            import traceback
+            traceback.print_exc()
+    else:
+        # Log why tagging was skipped
+        if not topics:
+            print(f"⏩ TAGGING: Skip - no topics extracted")
+        else:
+            should_suggest = should_suggest_users(channel, topics)
+            print(f"⏩ TAGGING: Skip - should_suggest={should_suggest} for topics={topics}")
+
+    # Final processing summary
+    total_time = time.time() - start_time
+    print(f"📋 PROCESSING SUMMARY:")
+    print(f"   Total time: {total_time:.2f}s")
+    print(f"   Topics extracted: {len(topics)}")
+    print(f"   Neo4j updated: {neo4j_updated}")
+    print(f"   Tagging attempted: {tagging_attempted}")
+    print(f"   Tagging successful: {tagging_successful}")
+    print(f"   Users suggested: {suggested_users_count}")
+    print(f"   Channel: {channel} | User: {display_name} ({user_id})")
+    print("─" * 80)
 
 if __name__ == "__main__":
     from utils import ADMIN_USER_IDS
+    import time
     
-    print("🤖 Starting MLAI Survey Bot with Slash Commands...")
-    print(f"📋 Admin Users: {ADMIN_USER_IDS}")
-    print(f"📊 Active Conversations: {len(conversation_state)}")
+    print("🤖 Starting MLAI Survey Bot with Enhanced Tagging System...")
+    print(f"   Version: Production with comprehensive logging")
+    print(f"   Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("")
-    print("💡 Usage: /trigger-survey <table_id> [test|all] [column_name]")
-    print("🔒 Only admins can use slash commands")
+    print("📋 Configuration:")
+    print(f"   Admin Users: {ADMIN_USER_IDS}")
+    print(f"   Active Conversations: {len(conversation_state)}")
+    print("")
+    print("🏷️ Smart Tagging Features:")
+    print("   ✅ Topic extraction with relationships (MENTIONS, WORKING_ON, INTERESTED_IN)")
+    print("   ✅ Neo4j knowledge graph integration")
+    print("   ✅ Intelligent user matching with priority ranking")
+    print("   ✅ LLM-powered warm personality responses")
+    print("   ✅ Anti-spam filtering and rate limiting")
+    print("   ✅ Comprehensive performance logging")
+    print("")
+    print("💡 Slash Commands:")
+    print("   /trigger-survey <table_id> [test|all] [column_name]")
+    print("   🔒 Only admins can use slash commands")
+    print("")
+    print("📊 Logging Format:")
+    print("   📨 MESSAGE EVENT - Basic message processing")
+    print("   🧠 TOPIC EXTRACTION - OpenAI analysis with timing")
+    print("   📊 GRAPH QUERY - Neo4j user matching with details")
+    print("   🔍 USER SUGGESTION - Matching and filtering logic")
+    print("   🎭 LLM FORMATTING - Warm response generation")
+    print("   ✅ SLACK POST - Final delivery confirmation")
+    print("   📋 PROCESSING SUMMARY - End-to-end metrics")
     print("")
     
     # Ensure we're using port 3000
     port = int(os.environ.get("PORT", 3000))
     print(f"🚀 Starting server on port {port}")
+    print("=" * 80)
     
     # Start Slack Bolt app
     app.start(port=port) 
