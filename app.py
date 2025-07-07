@@ -301,7 +301,13 @@ def handle_start_dm_button(ack, body, client):
 def process_message_with_tagging(event, client, logger):
     """Process message events with topic extraction and smart tagging."""
     import time
+    import random
     start_time = time.time()
+    
+    # Periodic cooldown cleanup (1% chance per message)
+    if random.random() < 0.01:
+        from utils import clear_expired_cooldowns
+        clear_expired_cooldowns()
     
     # Basic event logging
     print(f"📨 MESSAGE EVENT | {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -427,6 +433,20 @@ def process_message_with_tagging(event, client, logger):
                         tagging_successful = True
                         print(f"✅ SLACK POST: Warm tagging response sent ({slack_time:.2f}s)")
                         print(f"   Message TS: {response.get('ts')}")
+                        
+                        # Update cooldown for all tagged users
+                        from utils import update_user_cooldown
+                        tagged_users = []
+                        for user in suggestions['users']:
+                            user_id = user['user_id']
+                            if f"<@{user_id}>" in suggestion_message:
+                                update_user_cooldown(user_id)
+                                tagged_users.append(user['name'])
+                        
+                        if tagged_users:
+                            print(f"⏱️ COOLDOWN: Updated for {len(tagged_users)} users: {', '.join(tagged_users)}")
+                        else:
+                            print(f"⚠️ COOLDOWN: No users found in message - may be malformed")
                     else:
                         print(f"❌ SLACK POST FAILED: {response}")
                 else:
@@ -463,7 +483,7 @@ def process_message_with_tagging(event, client, logger):
     print("─" * 80)
 
 if __name__ == "__main__":
-    from utils import ADMIN_USER_IDS
+    from utils import ADMIN_USER_IDS, USER_TAG_COOLDOWN, CHANNEL_TAG_COOLDOWN
     import time
     
     print("🤖 Starting MLAI Survey Bot with Enhanced Tagging System...")
@@ -473,6 +493,8 @@ if __name__ == "__main__":
     print("📋 Configuration:")
     print(f"   Admin Users: {ADMIN_USER_IDS}")
     print(f"   Active Conversations: {len(conversation_state)}")
+    print(f"   User Tag Cooldown: {USER_TAG_COOLDOWN // 3600}h ({USER_TAG_COOLDOWN}s)")
+    print(f"   Channel Tag Cooldown: {CHANNEL_TAG_COOLDOWN // 60}m ({CHANNEL_TAG_COOLDOWN}s)")
     print("")
     print("🏷️ Smart Tagging Features:")
     print("   ✅ Topic extraction with relationships (MENTIONS, WORKING_ON, INTERESTED_IN)")
@@ -480,7 +502,13 @@ if __name__ == "__main__":
     print("   ✅ Intelligent user matching with priority ranking")
     print("   ✅ LLM-powered warm personality responses")
     print("   ✅ Anti-spam filtering and rate limiting")
+    print("   ✅ User cooldown system with 1-hour protection")
     print("   ✅ Comprehensive performance logging")
+    print("")
+    print("⏱️ Cooldown System:")
+    print(f"   🔒 Users cannot be tagged more than once per {USER_TAG_COOLDOWN // 3600} hour(s)")
+    print(f"   🧹 Automatic cleanup of expired cooldowns")
+    print(f"   📊 Thread-safe tracking with detailed logging")
     print("")
     print("💡 Slash Commands:")
     print("   /trigger-survey <table_id> [test|all] [column_name]")

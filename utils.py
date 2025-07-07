@@ -25,6 +25,18 @@ AIRTABLE_TABLE_NAME = os.environ.get("AIRTABLE_TABLE", "SlackUsers")
 AIRTABLE_COLUMN_NAME = os.environ.get("AIRTABLE_COLUMN_NAME", "SlackID")
 ADMIN_USER_IDS = os.environ.get("ADMIN_USER_IDS", "").split(",")
 
+# Global state management
+conversation_state = {}
+conversation_lock = threading.Lock()
+
+# Cooldown tracking for tagging
+user_tag_cooldowns = {}
+cooldown_lock = threading.Lock()
+
+# Cooldown configuration (in seconds)
+USER_TAG_COOLDOWN = 3600  # 1 hour cooldown per user
+CHANNEL_TAG_COOLDOWN = 300  # 5 minutes between any tags in a channel
+
 # Initialize clients
 api = Api(AIRTABLE_API_KEY)
 
@@ -38,13 +50,75 @@ def get_openai_client():
         _openai_client = OpenAI()
     return _openai_client
 
-# In-memory conversation state storage with thread safety
-conversation_state = {}
-conversation_lock = threading.Lock()
-
 def is_admin(user_id: str) -> bool:
     """Check if user is an admin."""
     return user_id in ADMIN_USER_IDS
+
+def get_conversation_state(user_id: str) -> dict:
+    """Get conversation state for a user."""
+    with conversation_lock:
+        return conversation_state.get(user_id, {})
+
+def set_conversation_state(user_id: str, state: dict):
+    """Set conversation state for a user."""
+    with conversation_lock:
+        conversation_state[user_id] = state
+
+def is_user_in_cooldown(user_id: str) -> bool:
+    """Check if a user is in cooldown period for tagging."""
+    with cooldown_lock:
+        last_tagged = user_tag_cooldowns.get(user_id, 0)
+        return time.time() - last_tagged < USER_TAG_COOLDOWN
+
+def update_user_cooldown(user_id: str):
+    """Update the cooldown timestamp for a user."""
+    with cooldown_lock:
+        user_tag_cooldowns[user_id] = time.time()
+
+def get_cooldown_remaining(user_id: str) -> int:
+    """Get remaining cooldown time in seconds for a user."""
+    with cooldown_lock:
+        last_tagged = user_tag_cooldowns.get(user_id, 0)
+        elapsed = time.time() - last_tagged
+        return max(0, int(USER_TAG_COOLDOWN - elapsed))
+
+def get_cooldown_stats() -> dict:
+    """Get statistics about current cooldown state."""
+    with cooldown_lock:
+        now = time.time()
+        active_cooldowns = []
+        for user_id, last_tagged in user_tag_cooldowns.items():
+            remaining = USER_TAG_COOLDOWN - (now - last_tagged)
+            if remaining > 0:
+                active_cooldowns.append({
+                    'user_id': user_id,
+                    'remaining_seconds': int(remaining),
+                    'remaining_minutes': int(remaining // 60)
+                })
+        
+        return {
+            'total_users_tracked': len(user_tag_cooldowns),
+            'active_cooldowns': len(active_cooldowns),
+            'cooldown_duration_hours': USER_TAG_COOLDOWN / 3600,
+            'users_in_cooldown': active_cooldowns
+        }
+
+def clear_expired_cooldowns():
+    """Clear expired cooldowns to prevent memory bloat."""
+    with cooldown_lock:
+        now = time.time()
+        expired_users = []
+        for user_id, last_tagged in list(user_tag_cooldowns.items()):
+            if now - last_tagged > USER_TAG_COOLDOWN:
+                expired_users.append(user_id)
+        
+        for user_id in expired_users:
+            del user_tag_cooldowns[user_id]
+        
+        if expired_users:
+            print(f"🧹 COOLDOWN CLEANUP: Removed {len(expired_users)} expired cooldowns")
+        
+        return len(expired_users)
 
 def safe_get_conversation_state(user_id: str):
     """Thread-safe get conversation state."""
@@ -535,11 +609,14 @@ def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_su
         print(f"   Expanded to {len(expanded_topics)} topic variations: {expanded_topics}")
         
         # Get relevant users for all expanded topics
+        # Request more users than needed to account for cooldowns (trickle down)
+        extended_limit = max_suggestions * 3  # Request 3x more users for trickle down
         graph_start = time.time()
-        relevant_users = get_relevant_users_for_topics(expanded_topics, exclude_user_id, limit=max_suggestions)
+        relevant_users = get_relevant_users_for_topics(expanded_topics, exclude_user_id, limit=extended_limit)
         graph_time = time.time() - graph_start
         
         print(f"   Graph query completed ({graph_time:.2f}s)")
+        print(f"   Requested {extended_limit} users (3x {max_suggestions}) for trickle down")
         
         if not relevant_users:
             print(f"   No relevant users found in graph")
@@ -605,15 +682,59 @@ def suggest_relevant_users(topics, exclude_user_id=None, channel_id=None, max_su
             -u['activity_level']
         ))
         
-        # Take top suggestions
-        top_users = sorted_users[:max_suggestions]
+        print(f"   Sorted candidate pool: {len(sorted_users)} users")
+        
+        # Filter out users in cooldown
+        available_users = []
+        cooldown_filtered = []
+        
+        for i, user in enumerate(sorted_users):
+            user_id = user['user_id']
+            if is_user_in_cooldown(user_id):
+                cooldown_remaining = get_cooldown_remaining(user_id)
+                minutes_remaining = cooldown_remaining // 60
+                cooldown_filtered.append({
+                    'user': user,
+                    'remaining_minutes': minutes_remaining,
+                    'original_rank': i + 1
+                })
+                continue
+            available_users.append(user)
+        
+        # Log cooldown filtering with trickle down effect
+        if cooldown_filtered:
+            print(f"⏱️ COOLDOWN FILTER: {len(cooldown_filtered)} users in cooldown (trickle down in effect):")
+            for item in cooldown_filtered[:3]:  # Show first 3
+                user = item['user']
+                minutes = item['remaining_minutes']
+                rank = item['original_rank']
+                print(f"     - #{rank} {user['name']} ({minutes}m remaining)")
+            if len(cooldown_filtered) > 3:
+                print(f"     ... and {len(cooldown_filtered) - 3} more")
+        else:
+            print(f"⏱️ COOLDOWN FILTER: No users in cooldown")
+        
+        # Take top suggestions from available users
+        top_users = available_users[:max_suggestions]
         suggestions['users'] = top_users
         
-        # Log final selection
-        print(f"   Selected top {len(top_users)} users:")
-        for i, user in enumerate(top_users):
-            rel_count = len(user['relationships'])
-            print(f"     {i+1}. {user['name']} - {user['best_relationship']} ({rel_count} relationships)")
+        # Check if we have enough users after trickle down
+        if len(top_users) < max_suggestions and len(available_users) < max_suggestions:
+            shortage = max_suggestions - len(available_users)
+            print(f"⚠️ TRICKLE DOWN: Only {len(available_users)} users available (need {max_suggestions})")
+            print(f"   Consider: {shortage} top users are in cooldown - this is working as intended!")
+        
+        # Log trickle down effect
+        if available_users:
+            print(f"🔄 TRICKLE DOWN: Final selection from {len(available_users)} available users:")
+            for i, user in enumerate(top_users):
+                rel_count = len(user['relationships'])
+                # Find original ranking before cooldown filtering
+                original_rank = next((j+1 for j, u in enumerate(sorted_users) if u['user_id'] == user['user_id']), "?")
+                trickle_note = f" (trickled down from #{original_rank})" if original_rank > i + 1 else ""
+                print(f"     {i+1}. {user['name']}{trickle_note} - {user['best_relationship']} ({rel_count} relationships)")
+        else:
+            print(f"⚠️ TRICKLE DOWN: No available users after cooldown filtering")
         
         processing_time = time.time() - start_time
         print(f"🔍 USER SUGGESTION: Complete ({processing_time:.2f}s)")
