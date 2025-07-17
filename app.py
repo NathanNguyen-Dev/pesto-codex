@@ -225,76 +225,7 @@ def handle_survey_start_button(ack, body, client):
         ]
     )
 
-@app.event("app_mention")
-def handle_app_mention(body, say, event, client):
-    """Handle when someone mentions the bot in a channel."""
-    try:
-        user_id = event["user"]
-        channel_id = event["channel"]
-        
-        print(f"Bot mentioned by user {user_id} in channel {channel_id}")
-        
-        # Respond in the channel with a helpful message
-        say(
-            text=f"Hi <@{user_id}>! 👋",
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": f"Hi <@{user_id}>! 👋\n\nI'm Pesto, the MLAI community survey bot. I conduct surveys through **private DM conversations** to keep things personal and focused.\n\n*I don't respond to channel mentions* - but I'd love to chat with you privately! 😊"
-                    }
-                },
-                {
-                    "type": "actions",
-                    "elements": [
-                        {
-                            "type": "button",
-                            "text": {
-                                "type": "plain_text",
-                                "text": "💬 Send me a DM"
-                            },
-                            "style": "primary",
-                            "action_id": "start_dm_button",
-                            "value": user_id
-                        }
-                    ]
-                }
-            ]
-        )
-        
-    except Exception as e:
-        print(f"Error handling app mention: {e}")
-
-@app.action("start_dm_button")
-def handle_start_dm_button(ack, body, client):
-    """Handle the 'Send me a DM' button click from app mentions."""
-    ack()
-    
-    user_id = body["user"]["id"]
-    
-    try:
-        # Send a helpful DM to the user
-        dm_channel = client.conversations_open(users=user_id)["channel"]["id"]
-        
-        client.chat_postMessage(
-            channel=dm_channel,
-            text="Hi there! 👋",
-            blocks=[
-                {
-                    "type": "section", 
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": "👋 Hi there! Thanks for your interest in chatting with me.\n\n**Survey Participation**: I currently only conduct surveys when triggered by MLAI admins through special commands.\n\n**How it works**: When a survey is active, you'll receive an invitation with a button to start the conversation.\n\nKeep an eye out for survey invitations from the MLAI team! 🚀"
-                    }
-                }
-            ]
-        )
-        
-        print(f"Sent informational DM to user {user_id} who clicked start_dm_button")
-        
-    except Exception as e:
-        print(f"Error sending DM to {user_id}: {e}")
+# App mention handler removed - bot no longer responds to channel mentions
 
 # Enhanced message handler with comprehensive logging
 @app.event("message")
