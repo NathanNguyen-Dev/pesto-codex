@@ -773,7 +773,7 @@ def format_user_suggestions_with_personality(suggestions, original_message):
         topics = suggestions['topics']
         users = suggestions['users']
         
-        # Create user context with their expertise
+        # Create user context with explicit relationship types
         user_context = []
         for user in users[:3]:  # Limit to top 3 users
             user_id = user['user_id']
@@ -781,13 +781,15 @@ def format_user_suggestions_with_personality(suggestions, original_message):
             best_rel = user['best_relationship']
             user_topics = user['topics']
             
-            # Create expertise description
+            # Create relationship-specific descriptions
             if best_rel == 'IS_EXPERT_IN':
-                expertise = f"expert in {', '.join(user_topics)}"
+                expertise = f"IS_EXPERT_IN {', '.join(user_topics)} - the go-to authority"
             elif best_rel == 'WORKING_ON':
-                expertise = f"working on {', '.join(user_topics)}"
-            else:
-                expertise = f"interested in {', '.join(user_topics)}"
+                expertise = f"WORKING_ON {', '.join(user_topics)} - actively building/developing"
+            elif best_rel == 'INTERESTED_IN':
+                expertise = f"INTERESTED_IN {', '.join(user_topics)} - learning/curious about"
+            else:  # MENTIONS
+                expertise = f"MENTIONS {', '.join(user_topics)} - has discussed"
             
             user_context.append(f"<@{user_id}> ({name} - {expertise})")
         
@@ -806,7 +808,7 @@ def format_user_suggestions_with_personality(suggestions, original_message):
         print(f"   🎯 Using o3-mini model with enhanced context awareness")
         
         # Create enhanced context for the LLM
-        context = f"""You need to generate a tagging response that matches the tone and style of the original message.
+        context = f"""You need to generate a tagging response that matches the tone and style of the original message AND customizes based on each person's relationship type.
 
 ORIGINAL MESSAGE ANALYSIS:
 - Content: "{original_message}"
@@ -818,15 +820,19 @@ ORIGINAL MESSAGE ANALYSIS:
 
 TOPICS BEING DISCUSSED: {', '.join(topics)}
 
-RELEVANT COMMUNITY MEMBERS TO TAG:
+RELEVANT COMMUNITY MEMBERS TO TAG (WITH RELATIONSHIP TYPES):
 {chr(10).join(user_context)}
 
-TASK: Generate ONE LINE that tags the most relevant people while matching the energy and tone of the original message.
-- Casual/excited → match that energy
-- Question-focused → connect them to someone who can help
-- Sharing something → connect people who'd be interested
+CRITICAL: Use each person's relationship type to customize how you refer to them:
+- IS_EXPERT_IN: Position as authority/expert ("the expert", "your expertise", "knows this inside out")
+- WORKING_ON: Connect to their active projects ("working on this", "building something similar", "right up your alley")
+- INTERESTED_IN: Frame as learning opportunity ("would love to learn", "perfect for your interests", "fascinating for you")
+- MENTIONS: Use general enthusiasm ("check this out", "one for you", "thoughts?")
 
-Your response should feel like a natural continuation of the conversation."""
+TASK: Generate ONE LINE that tags people while customizing the language based on their specific relationship to the topic.
+- Match the original message energy and tone
+- Use relationship-appropriate language for each person
+- Feel like a natural continuation of the conversation"""
         
         # Get LLM response using o3 for better contextual formatting
         llm_start = time.time()
